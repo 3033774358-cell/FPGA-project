@@ -1,0 +1,784 @@
+﻿diff --git "a/E:\\codex\\output\\sc_pipeline_\346\265\201\346\260\264\347\272\277\\controller.v" "b/C:\\Users\\changing\\Documents\\FPGA\\tmp\\sc_pipeline\\controller.v"
+index a5a1037..ebc2a11 100644
+--- "a/E:\\codex\\output\\sc_pipeline_\346\265\201\346\260\264\347\272\277\\controller.v"
++++ "b/C:\\Users\\changing\\Documents\\FPGA\\tmp\\sc_pipeline\\controller.v"
+@@ -129,7 +129,10 @@ module sc_controller #(
+     parameter integer NMAX      = 1024,
+     parameter integer MAX_LOG   = 10,
+     parameter integer ADDR_W    = 11,
+-    parameter integer INDEX_W   = 11
++    parameter integer INDEX_W   = 11,
++
++    // Fast-SSC: 快速节点并行路数
++    parameter integer FAST_P    = 8
+ )(
+     input  wire                         clk,
+     input  wire                         rst_n,
+@@ -215,7 +218,26 @@ module sc_controller #(
+ 
+     // 来自sc_datapath/sc_uhat_mem。
+     // 最后一个u_hat完成valid/ready握手后拉高一个周期。
+-    input  wire                         output_done
++    input  wire                         output_done,
++
++    // =========================================================================
++    // Fast-SSC 接口
++    // =========================================================================
++
++    // 节点类型 ROM 读地址/数据（ROM 位于 sc_decoder_core）
++    output reg  [10:0]                  type_rom_addr,
++    input  wire [1:0]                   type_rom_data,
++
++    // PH_G 中左子树为 Rate-0 时强制 PE beta=0
++    output reg                          beta_force0,
++
++    // 快速节点控制
++    output reg  [1:0]                   fast_op,
++    output reg  [ADDR_W-1:0]            fast_base,
++    output reg  [INDEX_W-1:0]           fast_uhat_base,
++    output reg  [ADDR_W-1:0]            fast_chunk,
++    output reg  [3:0]                   fast_pass,
++    output reg  [3:0]                   fast_len_log
+ );
+ 
+     // =========================================================================
+@@ -274,6 +296,52 @@ module sc_controller #(
+     // 该周期不发出任何微操作，等待数据提交后再继续。
+     reg bubble;
+ 
++    // =========================================================================
++    // Fast-SSC 控制寄存器
++    // =========================================================================
++    //
++    // heap_idx[d]      : 深度 d 当前节点的堆编号（用于节点类型 ROM 查询）
++    // ph_checked[d]    : 深度 d 节点 PH_F 阶段是否已完成左子树类型检查
++    // pg_checked[d]    : 深度 d 节点 PH_G 阶段是否已完成右子树类型检查
++    // lmode[d]         : 深度 d 节点左子树类型处理方式
++    //                     0=普通  1=Rate-0跳过  2=Rate-1快速
++    // rmode[d]         : 右子树类型处理方式
++    // merge_mode[d]    : PH_C beta 合并模式
++    //                     0=普通  1=左子树Rate-0  2=右子树Rate-0
++    // fd_*             : 快速节点子状态机
++    // =========================================================================
++
++    reg [10:0] heap_idx [0:MAX_LOG];
++
++    reg ph_checked [0:MAX_LOG];
++    reg pg_checked [0:MAX_LOG];
++
++    reg [1:0] lmode [0:MAX_LOG];
++    reg [1:0] rmode [0:MAX_LOG];
++    reg [1:0] merge_mode [0:MAX_LOG];
++
++    reg [1:0]  fd_state;
++    reg [10:0] fd_chunk;
++    reg [3:0]  fd_pass;
++    reg [3:0]  fd_len_log;
++    reg [ADDR_W-1:0]  fd_base;
++    reg [INDEX_W-1:0] fd_first_leaf;
++    reg        fd_gap;
++
++    integer fast_i;
++
++    localparam [1:0] LM_NORMAL = 2'd0;
++    localparam [1:0] LM_R0     = 2'd1;
++    localparam [1:0] LM_FAST   = 2'd2;
++
++    localparam [1:0] MM_NORMAL  = 2'd0;
++    localparam [1:0] MM_LEFT_R0 = 2'd1;
++    localparam [1:0] MM_RIGHT_R0= 2'd2;
++
++    localparam [1:0] FD_NONE      = 2'd0;
++    localparam [1:0] FD_DECIDE    = 2'd1;
++    localparam [1:0] FD_TRANSFORM = 2'd2;
++
+     integer reset_i;
+ 
+     // =========================================================================
+@@ -426,15 +494,42 @@ module sc_controller #(
+ 
+         output_start       = 1'b0;
+ 
++        // Fast-SSC 默认值
++        type_rom_addr      = 11'd0;
++        beta_force0        = 1'b0;
++        fast_op            = FD_NONE;
++        fast_base          = {ADDR_W{1'b0}};
++        fast_uhat_base     = {INDEX_W{1'b0}};
++        fast_chunk         = {ADDR_W{1'b0}};
++        fast_pass          = 4'd0;
++        fast_len_log       = 4'd0;
++
+         // ---------------------------------------------------------------------
+         // SC译码运行
+         // ---------------------------------------------------------------------
+ 
+         if ((state == ST_DECODE) && !bubble) begin
+ 
++            // ================================================================
++            // Fast-SSC：快速节点块下发（DECIDE / TRANSFORM）
++            // ================================================================
++
++            if (fd_state != FD_NONE) begin
++                if (!fd_gap) begin
++                    fast_op        = fd_state;
++                    fast_base      = fd_base;
++                    fast_uhat_base = fd_first_leaf;
++                    fast_chunk     = fd_chunk;
++                    fast_pass      = fd_pass;
++                    fast_len_log   = fd_len_log;
++                end
++            end
++            else
++
+             // ================================================================
+             // 叶节点
+             // ================================================================
++
+             //
+             // 叶节点LLR始终位于当前深度工作区的第0个位置。
+             //
+@@ -483,20 +578,30 @@ module sc_controller #(
+                 // ============================================================
+ 
+                 if (phase[cur_depth] == PH_F) begin
+-                    llr_rd_addr_a =
+-                        parent_addr_a_int[ADDR_W-1:0];
++                    // Fast-SSC：进入 PH_F 时查询左子树类型。
++                    // 左子树为 Rate-0 时跳过 PH_F（不计算 alpha）。
++                    if (!ph_checked[cur_depth]) begin
++                        type_rom_addr =
++                            (2 * heap_idx[cur_depth]) + 1;
++                    end
+ 
+-                    llr_rd_addr_b =
+-                        parent_addr_b_int[ADDR_W-1:0];
++                    if (ph_checked[cur_depth] ||
++                        (type_rom_data != 2'd1)) begin
++                        llr_rd_addr_a =
++                            parent_addr_a_int[ADDR_W-1:0];
+ 
+-                    pe_mode_g =
+-                        1'b0;
++                        llr_rd_addr_b =
++                            parent_addr_b_int[ADDR_W-1:0];
+ 
+-                    llr_wr_en =
+-                        1'b1;
++                        pe_mode_g =
++                            1'b0;
++
++                        llr_wr_en =
++                            1'b1;
+ 
+-                    llr_wr_addr =
+-                        child_addr_int[ADDR_W-1:0];
++                        llr_wr_addr =
++                            child_addr_int[ADDR_W-1:0];
++                    end
+                 end
+ 
+                 // ============================================================
+@@ -516,40 +621,55 @@ module sc_controller #(
+                 // ============================================================
+ 
+                 else if (phase[cur_depth] == PH_G) begin
+-                    llr_rd_addr_a =
+-                        parent_addr_a_int[ADDR_W-1:0];
++                    // Fast-SSC：进入 PH_G 时查询右子树类型。
++                    // 右子树为 Rate-0 时跳过 PH_G。
++                    if (!pg_checked[cur_depth]) begin
++                        type_rom_addr =
++                            (2 * heap_idx[cur_depth]) + 2;
++                    end
+ 
+-                    llr_rd_addr_b =
+-                        parent_addr_b_int[ADDR_W-1:0];
++                    if (pg_checked[cur_depth] ||
++                        (type_rom_data != 2'd1)) begin
++                        llr_rd_addr_a =
++                            parent_addr_a_int[ADDR_W-1:0];
+ 
+-                    pe_mode_g =
+-                        1'b1;
++                        llr_rd_addr_b =
++                            parent_addr_b_int[ADDR_W-1:0];
+ 
+-                    llr_wr_en =
+-                        1'b1;
++                        pe_mode_g =
++                            1'b1;
+ 
+-                    llr_wr_addr =
+-                        child_addr_int[ADDR_W-1:0];
++                        llr_wr_en =
++                            1'b1;
+ 
+-                    // beta_rd_data_a同时作为：
+-                    //
+-                    // 1. sc_pe执行g运算的beta输入；
+-                    // 2. 保存到父节点低半区的beta_left。
+-                    beta_rd_addr_a =
+-                        beta_child_int[ADDR_W-1:0];
++                        llr_wr_addr =
++                            child_addr_int[ADDR_W-1:0];
+ 
+-                    beta_rd_addr_b =
+-                        beta_child_int[ADDR_W-1:0];
++                        if (lmode[cur_depth] == LM_R0) begin
++                            // 左子树为 Rate-0：g 退化为加法
++                            beta_force0 = 1'b1;
++                        end
++                        else begin
++                            // beta_rd_data_a同时作为：
++                            // 1. sc_pe执行g运算的beta输入；
++                            // 2. 保存到父节点低半区的beta_left。
++                            beta_rd_addr_a =
++                                beta_child_int[ADDR_W-1:0];
+ 
+-                    beta_wr_en =
+-                        1'b1;
++                            beta_rd_addr_b =
++                                beta_child_int[ADDR_W-1:0];
++
++                            beta_wr_en =
++                                1'b1;
+ 
+-                    beta_wr_addr =
+-                        beta_parent_low_int[ADDR_W-1:0];
++                            beta_wr_addr =
++                                beta_parent_low_int[ADDR_W-1:0];
+ 
+-                    // 直接写beta_rd_data_a
+-                    beta_wr_mode =
+-                        2'b10;
++                            // 直接写beta_rd_data_a
++                            beta_wr_mode =
++                                2'b10;
++                        end
++                    end
+                 end
+ 
+                 // ============================================================
+@@ -572,45 +692,94 @@ module sc_controller #(
+                 // ============================================================
+ 
+                 else begin
+-                    if (!merge_second_write) begin
+-                        // -----------------------------------------------------
+-                        // 第1周期：parent低半 = left XOR right
+-                        // -----------------------------------------------------
++                    case (merge_mode[cur_depth])
+ 
+-                        beta_rd_addr_a =
+-                            beta_parent_low_int[ADDR_W-1:0];
++                        MM_LEFT_R0: begin
++                            // beta_v = [beta_r, beta_r]
++                            if (!merge_second_write) begin
++                                beta_rd_addr_a =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_rd_addr_b =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_wr_en = 1'b1;
++                                beta_wr_addr =
++                                    beta_parent_low_int[ADDR_W-1:0];
++                                beta_wr_mode = 2'b10;
++                            end else begin
++                                beta_rd_addr_a =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_rd_addr_b =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_wr_en = 1'b1;
++                                beta_wr_addr =
++                                    beta_parent_high_int[ADDR_W-1:0];
++                                beta_wr_mode = 2'b10;
++                            end
++                        end
+ 
+-                        beta_rd_addr_b =
+-                            beta_child_int[ADDR_W-1:0];
++                        MM_RIGHT_R0: begin
++                            // beta_v = [beta_l, 0]，beta_l 仍在 child 工作区
++                            if (!merge_second_write) begin
++                                beta_rd_addr_a =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_rd_addr_b =
++                                    beta_child_int[ADDR_W-1:0];
++                                beta_wr_en = 1'b1;
++                                beta_wr_addr =
++                                    beta_parent_low_int[ADDR_W-1:0];
++                                beta_wr_mode = 2'b10;
++                            end else begin
++                                beta_wr_en = 1'b1;
++                                beta_wr_addr =
++                                    beta_parent_high_int[ADDR_W-1:0];
++                                beta_wr_data = 1'b0;
++                                beta_wr_mode = 2'b00;
++                            end
++                        end
+ 
+-                        beta_wr_en =
+-                            1'b1;
++                        default: begin
++                            if (!merge_second_write) begin
++                                // ---------------------------------------------
++                                // 第1周期：parent低半 = left XOR right
++                                // ---------------------------------------------
+ 
+-                        beta_wr_addr =
+-                            beta_parent_low_int[ADDR_W-1:0];
++                                beta_rd_addr_a =
++                                    beta_parent_low_int[ADDR_W-1:0];
+ 
+-                        beta_wr_mode =
+-                            2'b01;
+-                    end else begin
+-                        // -----------------------------------------------------
+-                        // 第2周期：parent高半 = right
+-                        // -----------------------------------------------------
++                                beta_rd_addr_b =
++                                    beta_child_int[ADDR_W-1:0];
+ 
+-                        beta_rd_addr_a =
+-                            beta_child_int[ADDR_W-1:0];
++                                beta_wr_en =
++                                    1'b1;
+ 
+-                        beta_rd_addr_b =
+-                            beta_child_int[ADDR_W-1:0];
++                                beta_wr_addr =
++                                    beta_parent_low_int[ADDR_W-1:0];
+ 
+-                        beta_wr_en =
+-                            1'b1;
++                                beta_wr_mode =
++                                    2'b01;
++                            end else begin
++                                // ---------------------------------------------
++                                // 第2周期：parent高半 = right
++                                // ---------------------------------------------
+ 
+-                        beta_wr_addr =
+-                            beta_parent_high_int[ADDR_W-1:0];
++                                beta_rd_addr_a =
++                                    beta_child_int[ADDR_W-1:0];
+ 
+-                        beta_wr_mode =
+-                            2'b10;
+-                    end
++                                beta_rd_addr_b =
++                                    beta_child_int[ADDR_W-1:0];
++
++                                beta_wr_en =
++                                    1'b1;
++
++                                beta_wr_addr =
++                                    beta_parent_high_int[ADDR_W-1:0];
++
++                                beta_wr_mode =
++                                    2'b10;
++                            end
++                        end
++
++                    endcase
+                 end
+             end
+         end
+@@ -624,6 +793,30 @@ module sc_controller #(
+         end
+     end
+ 
++    // =========================================================================
++    // Fast-SSC 辅助逻辑
++    // =========================================================================
++
++    // 快速节点块数：ceil(2^fd_len_log / FAST_P)
++    wire [10:0] fd_nchunks =
++        (fd_len_log >= $clog2(FAST_P))
++        ? (11'd1 << (fd_len_log - $clog2(FAST_P)))
++        : 11'd1;
++
++    // 启动深度 dd 处的快速节点（Rate-1）
++    task start_fast;
++        input [3:0] dd;
++        begin
++            fd_state      <= FD_DECIDE;
++            fd_chunk      <= {ADDR_W{1'b0}};
++            fd_pass       <= 4'd0;
++            fd_len_log    <= n_log - dd;
++            fd_base       <= depth_base(dd);
++            fd_first_leaf <= current_leaf;
++            fd_gap        <= 1'b0;
++        end
++    endtask
++
+     // =========================================================================
+     // 主时序控制
+     // =========================================================================
+@@ -640,10 +833,24 @@ module sc_controller #(
+             merge_second_write <= 1'b0;
+             bubble             <= 1'b0;
+ 
++            fd_state           <= FD_NONE;
++            fd_chunk           <= {ADDR_W{1'b0}};
++            fd_pass            <= 4'd0;
++            fd_len_log         <= 4'd0;
++            fd_base            <= {ADDR_W{1'b0}};
++            fd_first_leaf      <= {INDEX_W{1'b0}};
++            fd_gap             <= 1'b0;
++
+             for (reset_i = 0;
+                  reset_i <= MAX_LOG;
+                  reset_i = reset_i + 1) begin
+                 phase[reset_i] <= PH_F;
++                heap_idx[reset_i]  <= 11'd0;
++                ph_checked[reset_i] <= 1'b0;
++                pg_checked[reset_i] <= 1'b0;
++                lmode[reset_i]      <= 2'd0;
++                rmode[reset_i]      <= 2'd0;
++                merge_mode[reset_i] <= 2'd0;
+             end
+         end else begin
+             // decode_done默认只保持一个周期
+@@ -663,6 +870,14 @@ module sc_controller #(
+                     merge_second_write <= 1'b0;
+                     bubble             <= 1'b0;
+ 
++                    fd_state           <= FD_NONE;
++                    fd_chunk           <= {ADDR_W{1'b0}};
++                    fd_pass            <= 4'd0;
++                    fd_len_log         <= 4'd0;
++                    fd_base            <= {ADDR_W{1'b0}};
++                    fd_first_leaf      <= {INDEX_W{1'b0}};
++                    fd_gap             <= 1'b0;
++
+                     if (decode_start &&
+                         (n_log >= 1) &&
+                         (n_log <= MAX_LOG)) begin
+@@ -678,9 +893,27 @@ module sc_controller #(
+                              reset_i <= MAX_LOG;
+                              reset_i = reset_i + 1) begin
+                             phase[reset_i] <= PH_F;
++                            heap_idx[reset_i]  <= 11'd0;
++                            ph_checked[reset_i] <= 1'b0;
++                            pg_checked[reset_i] <= 1'b0;
++                            lmode[reset_i]      <= 2'd0;
++                            rmode[reset_i]      <= 2'd0;
++                            merge_mode[reset_i] <= 2'd0;
+                         end
+ 
+-                        state <= ST_DECODE;
++                        // Fast-SSC：根节点类型分支
++                        if (type_rom_data == 2'd1) begin
++                            // 根节点 Rate-0：全部冻结，直接输出
++                            state <= ST_OUTPUT_START;
++                        end
++                        else if (type_rom_data == 2'd2) begin
++                            // 根节点 Rate-1：整码快速译码
++                            start_fast(4'd0);
++                            state <= ST_DECODE;
++                        end
++                        else begin
++                            state <= ST_DECODE;
++                        end
+                     end
+                 end
+ 
+@@ -696,123 +929,206 @@ module sc_controller #(
+                         // previous micro-operation to commit
+                         bubble <= 1'b0;
+                     end
+-                    else begin
+-
+-                    // ---------------------------------------------------------
+-                    // 叶节点判决
+-                    // ---------------------------------------------------------
+-                    //
+-                    // 本周期组合逻辑已经拉高leaf_decision_en。
+-                    // 在当前上升沿：
+-                    //
+-                    //   1. sc_datapath写入叶beta；
+-                    //   2. sc_uhat_mem写入u_hat[current_leaf]；
+-                    //   3. 控制器返回叶节点父层。
+-                    // ---------------------------------------------------------
+-
+-                    if (cur_depth == n_log) begin
+-                        current_leaf       <= current_leaf + 1'b1;
+-                        element_index      <= {INDEX_W{1'b0}};
+-                        merge_second_write <= 1'b0;
+-                        bubble             <= 1'b1;
+-
+-                        if (cur_depth != 0) begin
+-                            cur_depth <= cur_depth - 1'b1;
+-                        end
+-                    end else begin
+-
++                    else if (fd_state != FD_NONE) begin
+                         // -----------------------------------------------------
+-                        // PH_F：左子节点LLR生成
++                        // Fast-SSC fast-node sub-FSM
+                         // -----------------------------------------------------
+-
+-                        if (phase[cur_depth] == PH_F) begin
+-                            if (element_index ==
+-                                (current_half - 1)) begin
+-
+-                                // 当前节点左alpha全部生成完毕。
+-                                //
+-                                // 父层下一阶段设为PH_G。
+-                                // 子层从PH_F开始。
++                        if (fd_gap) begin
++                            fd_gap <= 1'b0;
++                        end
++                        else if (fd_state == FD_DECIDE) begin
++                            if (fd_chunk == (fd_nchunks - 11'd1)) begin
++                                fd_state <= FD_TRANSFORM;
++                                fd_chunk <= {ADDR_W{1'b0}};
++                                fd_pass  <= 4'd0;
++                                fd_gap   <= 1'b1;
++                            end else begin
++                                fd_chunk <= fd_chunk + 1'b1;
++                            end
++                        end
++                        else begin
++                            // TRANSFORM
++                            if ((fd_pass == (fd_len_log - 4'd1)) &&
++                                (fd_chunk == (fd_nchunks - 11'd1))) begin
++                                // TRANSFORM
++                                fd_state <= FD_NONE;
++                                current_leaf <=
++                                    current_leaf + (11'd1 << fd_len_log);
++                                if (cur_depth == 0) begin
++                                    state <= ST_OUTPUT_START;
++                                end else begin
++                                    cur_depth <= cur_depth - 1'b1;
++                                    bubble    <= 1'b1;
++                                end
++                            end
++                            else if (fd_chunk == (fd_nchunks - 11'd1)) begin
++                                fd_chunk <= {ADDR_W{1'b0}};
++                                fd_pass  <= fd_pass + 4'd1;
++                                fd_gap   <= 1'b1;
++                            end else begin
++                                fd_chunk <= fd_chunk + 1'b1;
++                            end
++                        end
++                    end
++                    else begin
++                        // =====================================================
++                        // normal DFS (Fast-SSC type check + Rate-0 skip)
++                        // =====================================================
++
++                        if (cur_depth == n_log) begin
++                            // leaf decision
++                            current_leaf       <= current_leaf + 1'b1;
++                            element_index      <= {INDEX_W{1'b0}};
++                            merge_second_write <= 1'b0;
++                            bubble             <= 1'b1;
++
++                            if (cur_depth != 0) begin
++                                cur_depth <= cur_depth - 1'b1;
++                            end
++                        end
++                        else if (phase[cur_depth] == PH_F) begin
++                            merge_mode[cur_depth] <= MM_NORMAL;
++
++                            if (!ph_checked[cur_depth]) begin
++                                if (type_rom_data == 2'd1) begin
++                                    // left child Rate-0: skip PH_F
++                                    lmode[cur_depth]      <= LM_R0;
++                                    phase[cur_depth]      <= PH_G;
++                                    merge_mode[cur_depth] <= MM_LEFT_R0;
++                                    current_leaf <=
++                                        current_leaf +
++                                        (11'd1 << (n_log - cur_depth - 4'd1));
++                                    element_index <= {INDEX_W{1'b0}};
++                                end
++                                else begin
++                                    ph_checked[cur_depth] <= 1'b1;
++                                    lmode[cur_depth] <=
++                                        ((type_rom_data == 2'd2) &&
++                                         ((11'd1 << (n_log - cur_depth - 4'd1)) >= 4'd2))
++                                        ? LM_FAST : LM_NORMAL;
++
++                                    if (current_half == 1) begin
++                                        // first f op is also the last: descend
++                                        phase[cur_depth] <= PH_G;
++                                        if (cur_depth < MAX_LOG) begin
++                                            phase[cur_depth + 1'b1] <= PH_F;
++                                        end
++                                        element_index      <= {INDEX_W{1'b0}};
++                                        merge_second_write <= 1'b0;
++                                        cur_depth          <= cur_depth + 1'b1;
++                                        heap_idx[cur_depth + 1'b1] <=
++                                            2 * heap_idx[cur_depth] + 1;
++                                        ph_checked[cur_depth + 1'b1] <= 1'b0;
++                                        pg_checked[cur_depth + 1'b1] <= 1'b0;
++                                        bubble             <= 1'b1;
++                                        if ((type_rom_data == 2'd2) &&
++                                            ((11'd1 << (n_log - cur_depth - 4'd1)) >= 4'd2)) begin
++                                            start_fast(cur_depth + 1'b1);
++                                        end
++                                    end
++                                    else begin
++                                        element_index <= element_index + 1'b1;
++                                    end
++                                end
++                            end
++                            else if (element_index == (current_half - 1)) begin
++                                // PH_F done: descend into left subtree
+                                 phase[cur_depth] <= PH_G;
+-
+                                 if (cur_depth < MAX_LOG) begin
+                                     phase[cur_depth + 1'b1] <= PH_F;
+                                 end
+-
+                                 element_index      <= {INDEX_W{1'b0}};
+                                 merge_second_write <= 1'b0;
+                                 cur_depth          <= cur_depth + 1'b1;
++                                heap_idx[cur_depth + 1'b1] <=
++                                    2 * heap_idx[cur_depth] + 1;
++                                ph_checked[cur_depth + 1'b1] <= 1'b0;
++                                pg_checked[cur_depth + 1'b1] <= 1'b0;
+                                 bubble             <= 1'b1;
+-                            end else begin
++                                if (lmode[cur_depth] == LM_FAST) begin
++                                    start_fast(cur_depth + 1'b1);
++                                end
++                            end
++                            else begin
+                                 element_index <= element_index + 1'b1;
+                             end
+                         end
+-
+-                        // -----------------------------------------------------
+-                        // PH_G：右子节点LLR生成
+-                        // -----------------------------------------------------
+-
+                         else if (phase[cur_depth] == PH_G) begin
+-                            if (element_index ==
+-                                (current_half - 1)) begin
+-
+-                                // 当前节点右alpha全部生成完毕。
+-                                //
+-                                // 父层下一阶段设为PH_C。
+-                                // 子层重新从PH_F开始。
++                            if (!pg_checked[cur_depth]) begin
++                                if (type_rom_data == 2'd1) begin
++                                    // right child Rate-0: skip PH_G
++                                    rmode[cur_depth]      <= LM_R0;
++                                    phase[cur_depth]      <= PH_C;
++                                    merge_mode[cur_depth] <= MM_RIGHT_R0;
++                                    current_leaf <=
++                                        current_leaf +
++                                        (11'd1 << (n_log - cur_depth - 4'd1));
++                                    element_index      <= {INDEX_W{1'b0}};
++                                    merge_second_write <= 1'b0;
++                                end
++                                else begin
++                                    pg_checked[cur_depth] <= 1'b1;
++                                    rmode[cur_depth] <=
++                                        ((type_rom_data == 2'd2) &&
++                                         ((11'd1 << (n_log - cur_depth - 4'd1)) >= 4'd2))
++                                        ? LM_FAST : LM_NORMAL;
++
++                                    if (current_half == 1) begin
++                                        phase[cur_depth] <= PH_C;
++                                        if (cur_depth < MAX_LOG) begin
++                                            phase[cur_depth + 1'b1] <= PH_F;
++                                        end
++                                        element_index      <= {INDEX_W{1'b0}};
++                                        merge_second_write <= 1'b0;
++                                        cur_depth          <= cur_depth + 1'b1;
++                                        heap_idx[cur_depth + 1'b1] <=
++                                            2 * heap_idx[cur_depth] + 2;
++                                        ph_checked[cur_depth + 1'b1] <= 1'b0;
++                                        pg_checked[cur_depth + 1'b1] <= 1'b0;
++                                        bubble             <= 1'b1;
++                                        if ((type_rom_data == 2'd2) &&
++                                            ((11'd1 << (n_log - cur_depth - 4'd1)) >= 4'd2)) begin
++                                            start_fast(cur_depth + 1'b1);
++                                        end
++                                    end
++                                    else begin
++                                        element_index <= element_index + 1'b1;
++                                    end
++                                end
++                            end
++                            else if (element_index == (current_half - 1)) begin
++                                // PH_G done: descend into right subtree
+                                 phase[cur_depth] <= PH_C;
+-
+                                 if (cur_depth < MAX_LOG) begin
+                                     phase[cur_depth + 1'b1] <= PH_F;
+                                 end
+-
+                                 element_index      <= {INDEX_W{1'b0}};
+                                 merge_second_write <= 1'b0;
+                                 cur_depth          <= cur_depth + 1'b1;
++                                heap_idx[cur_depth + 1'b1] <=
++                                    2 * heap_idx[cur_depth] + 2;
++                                ph_checked[cur_depth + 1'b1] <= 1'b0;
++                                pg_checked[cur_depth + 1'b1] <= 1'b0;
+                                 bubble             <= 1'b1;
+-                            end else begin
++                                if (rmode[cur_depth] == LM_FAST) begin
++                                    start_fast(cur_depth + 1'b1);
++                                end
++                            end
++                            else begin
+                                 element_index <= element_index + 1'b1;
+                             end
+                         end
+-
+-                        // -----------------------------------------------------
+-                        // PH_C：beta合并
+-                        // -----------------------------------------------------
+-
+                         else begin
++                            // PH_C: beta merge
+                             if (!merge_second_write) begin
+-                                // 当前周期已经写入：
+-                                //
+-                                // parent[k] = left XOR right
+-                                //
+-                                // 下一周期写入：
+-                                //
+-                                // parent[k+half] = right
+                                 merge_second_write <= 1'b1;
+                             end else begin
+-                                // 当前周期已经写入：
+-                                //
+-                                // parent[k+half] = right
+-
+                                 merge_second_write <= 1'b0;
+-
+-                                if (element_index ==
+-                                    (current_half - 1)) begin
+-
++                                if (element_index == (current_half - 1)) begin
+                                     element_index <= {INDEX_W{1'b0}};
+-
+-                                    // 根节点beta合并完成。
+-                                    //
+-                                    // 此时beta_mem[0:N-1]应与编码码字d一致。
+                                     if (cur_depth == 0) begin
+                                         state <= ST_OUTPUT_START;
+                                     end else begin
+-                                        // 返回当前节点父层。
+-                                        //
+-                                        // 父层phase已经在下降当前子树之前设置：
+-                                        //
+-                                        //   左子树完成后为PH_G
+-                                        //   右子树完成后为PH_C
+                                         cur_depth <= cur_depth - 1'b1;
+                                     end
+                                 end else begin
+@@ -821,7 +1137,6 @@ module sc_controller #(
+                             end
+                         end
+                     end
+-                    end
+                 end
+ 
+                 // =============================================================

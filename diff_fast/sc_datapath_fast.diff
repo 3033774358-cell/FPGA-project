@@ -1,0 +1,288 @@
+﻿diff --git "a/E:\\codex\\output\\sc_pipeline_\346\265\201\346\260\264\347\272\277\\sc_datapath.v" "b/C:\\Users\\changing\\Documents\\FPGA\\tmp\\sc_pipeline\\sc_datapath.v"
+index 5891c50..6265dc7 100644
+--- "a/E:\\codex\\output\\sc_pipeline_\346\265\201\346\260\264\347\272\277\\sc_datapath.v"
++++ "b/C:\\Users\\changing\\Documents\\FPGA\\tmp\\sc_pipeline\\sc_datapath.v"
+@@ -201,7 +201,10 @@ module sc_datapath #(
+     parameter integer ADDR_W    = 11,
+ 
+     // 能够表示自然索引0～1023以及码长1024
+-    parameter integer INDEX_W   = 11
++    parameter integer INDEX_W   = 11,
++
++    // Fast-SSC: 快速节点并行路数（P 路宽读/写）
++    parameter integer FAST_P    = 8
+ )(
+     input  wire                         clk,
+     input  wire                         rst_n,
+@@ -349,7 +352,33 @@ module sc_datapath #(
+     output wire [10:0]                  u_index,
+ 
+     // 当前输出是u_hat[N-1]
+-    output wire                         u_last
++    output wire                         u_last,
++
++    // =========================================================================
++    // Fast-SSC 接口
++    // =========================================================================
++    //
++    // frozen_bits   : 冻结位掩码，输出阶段把冻结位强制判 0
++    // beta_force0   : PH_G 中左子树为 Rate-0 时，PE 的 beta 输入强制为 0
++    // fast_op       : 1=DECIDE（读 P 个 LLR，写 beta/uhat 原始硬判决）
++    //                 2=TRANSFORM（uhat 区 P 路原位蝴蝶变换）
++    // fast_base     : 快速节点所在深度工作区基地址（LLR/beta）
++    // fast_uhat_base: 快速节点第一个叶子的自然索引
++    // fast_chunk    : 当前处理的 P 位块序号
++    // fast_pass     : 变换级数（2^pass 为对距离）
++    // fast_len_log  : 快速节点长度 log2
++    // =========================================================================
++
++    input  wire [NMAX-1:0]              frozen_bits,
++
++    input  wire                         beta_force0,
++
++    input  wire [1:0]                   fast_op,
++    input  wire [ADDR_W-1:0]            fast_base,
++    input  wire [INDEX_W-1:0]           fast_uhat_base,
++    input  wire [ADDR_W-1:0]            fast_chunk,
++    input  wire [3:0]                   fast_pass,
++    input  wire [3:0]                   fast_len_log
+ );
+ 
+     // =========================================================================
+@@ -359,8 +388,14 @@ module sc_datapath #(
+     wire signed [INT_W-1:0] pe_y;
+     wire                    pe_beta;
+ 
++    // Fast-SSC 宽读/宽写内部连线
++    wire [(FAST_P*INT_W)-1:0] llr_rd_vec_data;
++    wire [FAST_P-1:0]         uhat_rd_vec_data_a;
++    wire [FAST_P-1:0]         uhat_rd_vec_data_b;
++
+     // g运算使用beta读端口A
+-    assign pe_beta = beta_a_d1;
++    // Fast-SSC: 左子树为 Rate-0 时强制 beta=0（g 退化为加法）
++    assign pe_beta = beta_force0_d1 ? 1'b0 : beta_a_d1;
+ 
+     // 将PE输出连接到顶层调试端口
+     assign pe_result = pe_y;
+@@ -471,6 +506,7 @@ module sc_datapath #(
+     reg                    beta_a_d1;
+     reg                    beta_b_d1;
+     reg                    pe_mode_g_d1;
++    reg                    beta_force0_d1;
+ 
+     reg                    llr_wr_en_d1;
+     reg [ADDR_W-1:0]       llr_wr_addr_d1;
+@@ -492,6 +528,7 @@ module sc_datapath #(
+             beta_a_d1           <= 1'b0;
+             beta_b_d1           <= 1'b0;
+             pe_mode_g_d1        <= 1'b0;
++            beta_force0_d1      <= 1'b0;
+ 
+             llr_wr_en_d1        <= 1'b0;
+             llr_wr_addr_d1      <= {ADDR_W{1'b0}};
+@@ -512,6 +549,7 @@ module sc_datapath #(
+             beta_a_d1           <= beta_rd_data_a;
+             beta_b_d1           <= beta_rd_data_b;
+             pe_mode_g_d1        <= pe_mode_g;
++            beta_force0_d1      <= beta_force0;
+ 
+             llr_wr_en_d1        <= llr_wr_en;
+             llr_wr_addr_d1      <= llr_wr_addr;
+@@ -528,6 +566,120 @@ module sc_datapath #(
+         end
+     end
+ 
++    // =========================================================================
++    // Fast-SSC fast-node unit (Rate-1 vector decode)
++    // =========================================================================
++    //
++    // DECIDE   (fast_op=1): read P LLRs at fast_base + chunk*P, per-lane
++    //                       hard decisions written to beta_mem (beta_v)
++    //                       and uhat_mem (raw).
++    // TRANSFORM(fast_op=2): in-place butterfly on uhat_mem:
++    //                       uhat[k] ^= uhat[k + 2^fast_pass]
++    //                       for lanes with bit fast_pass of (chunk*P+i) == 0.
++    // Lane mask             : chunk*P + i < 2^fast_len_log.
++    // Pipeline              : issue at T, capture d1 at T+1, commit at T+2.
++    // =========================================================================
++
++    wire [ADDR_W-1:0]  fd_llr_rd_addr =
++        fast_base + fast_chunk * FAST_P;
++
++    wire [INDEX_W-1:0] fd_uhat_rd_a =
++        fast_uhat_base + fast_chunk * FAST_P;
++
++    wire [INDEX_W-1:0] fd_uhat_rd_b =
++        fast_uhat_base + fast_chunk * FAST_P +
++        (11'd1 << fast_pass);
++
++    wire [FAST_P-1:0] fd_decide_mask;
++    wire [FAST_P-1:0] fd_tf_mask;
++
++    generate
++        genvar fdi;
++        for (fdi = 0; fdi < FAST_P; fdi = fdi + 1)
++        begin : gen_fast_mask
++            assign fd_decide_mask[fdi] =
++                ((fast_chunk * FAST_P + fdi) <
++                 (11'd1 << fast_len_log));
++
++            assign fd_tf_mask[fdi] =
++                ((fast_chunk * FAST_P + fdi) <
++                 (11'd1 << fast_len_log)) &&
++                (((fast_chunk * FAST_P + fdi) &
++                  (11'd1 << fast_pass)) == 0);
++        end
++    endgenerate
++
++    // ---- fast path pipeline stage-1 registers -------------------------------
++
++    reg  fd_decide_d1;
++    reg  fd_transform_d1;
++    reg [FAST_P*INT_W-1:0] fd_llr_vec_d1;
++    reg [FAST_P-1:0]       fd_decide_mask_d1;
++    reg [FAST_P-1:0]       fd_tf_mask_d1;
++    reg [FAST_P-1:0]       fd_tf_a_d1;
++    reg [FAST_P-1:0]       fd_tf_b_d1;
++    reg [ADDR_W-1:0]       fd_beta_addr_d1;
++    reg [INDEX_W-1:0]      fd_uhat_addr_d1;
++
++    always @(posedge clk or negedge rst_n) begin
++        if (!rst_n) begin
++            fd_decide_d1      <= 1'b0;
++            fd_transform_d1   <= 1'b0;
++            fd_llr_vec_d1     <= {FAST_P*INT_W{1'b0}};
++            fd_decide_mask_d1 <= {FAST_P{1'b0}};
++            fd_tf_mask_d1     <= {FAST_P{1'b0}};
++            fd_tf_a_d1        <= {FAST_P{1'b0}};
++            fd_tf_b_d1        <= {FAST_P{1'b0}};
++            fd_beta_addr_d1   <= {ADDR_W{1'b0}};
++            fd_uhat_addr_d1   <= {INDEX_W{1'b0}};
++        end
++        else begin
++            fd_decide_d1      <= (fast_op == 2'd1);
++            fd_transform_d1   <= (fast_op == 2'd2);
++            fd_llr_vec_d1     <= llr_rd_vec_data;
++            fd_decide_mask_d1 <= fd_decide_mask;
++            fd_tf_mask_d1     <= fd_tf_mask;
++            fd_tf_a_d1        <= uhat_rd_vec_data_a;
++            fd_tf_b_d1        <= uhat_rd_vec_data_b;
++            fd_beta_addr_d1   <= fast_base + fast_chunk * FAST_P;
++            fd_uhat_addr_d1   <= fast_uhat_base + fast_chunk * FAST_P;
++        end
++    end
++
++    // ---- stage-2 compute and wide write data --------------------------------
++
++    wire [FAST_P-1:0] fd_dec_bits;
++    wire [FAST_P-1:0] fd_tf_bits;
++
++    generate
++        genvar fdi2;
++        for (fdi2 = 0; fdi2 < FAST_P; fdi2 = fdi2 + 1)
++        begin : gen_dec_bits
++            // hard decision: LLR sign bit
++            assign fd_dec_bits[fdi2] =
++                fd_llr_vec_d1[fdi2*INT_W + INT_W - 1];
++        end
++
++        genvar fdi3;
++        for (fdi3 = 0; fdi3 < FAST_P; fdi3 = fdi3 + 1)
++        begin : gen_tf_bits
++            assign fd_tf_bits[fdi3] =
++                fd_tf_a_d1[fdi3] ^ fd_tf_b_d1[fdi3];
++        end
++    endgenerate
++
++    wire [FAST_P-1:0] beta_wr_vec_en =
++        fd_decide_d1 ? fd_decide_mask_d1 : {FAST_P{1'b0}};
++
++    wire [FAST_P-1:0] uhat_wr_vec_en =
++        (fd_decide_d1 ? fd_decide_mask_d1 : {FAST_P{1'b0}}) |
++        (fd_transform_d1 ? fd_tf_mask_d1 : {FAST_P{1'b0}});
++
++    wire [FAST_P-1:0] uhat_wr_vec_bits =
++        fd_transform_d1 ? fd_tf_bits : fd_dec_bits;
++
++    wire [INDEX_W-1:0] uhat_wr_vec_index = fd_uhat_addr_d1;
++
+     // =========================================================================
+     // Processing Element
+     // =========================================================================
+@@ -559,7 +711,8 @@ module sc_datapath #(
+         .MAX_LOG   (MAX_LOG),
+         .MEM_DEPTH (MEM_DEPTH),
+         .ADDR_W    (ADDR_W),
+-        .N_W       (INDEX_W)
++        .N_W       (INDEX_W),
++        .FAST_P    (FAST_P)
+     )
+     u_sc_llr_mem (
+         .clk          (clk),
+@@ -581,7 +734,10 @@ module sc_datapath #(
+         .rd_data_a    (llr_rd_data_a),
+ 
+         .rd_addr_b    (llr_rd_addr_b),
+-        .rd_data_b    (llr_rd_data_b)
++        .rd_data_b    (llr_rd_data_b),
++
++        .rd_vec_addr  (fd_llr_rd_addr),
++        .rd_vec_data  (llr_rd_vec_data)
+     );
+ 
+     // =========================================================================
+@@ -591,7 +747,8 @@ module sc_datapath #(
+     sc_beta_mem #(
+         .NMAX      (NMAX),
+         .MEM_DEPTH (MEM_DEPTH),
+-        .ADDR_W    (ADDR_W)
++        .ADDR_W    (ADDR_W),
++        .FAST_P    (FAST_P)
+     )
+     u_sc_beta_mem (
+         .clk       (clk),
+@@ -605,7 +762,11 @@ module sc_datapath #(
+         .rd_data_a (beta_rd_data_a),
+ 
+         .rd_addr_b (beta_rd_addr_b),
+-        .rd_data_b (beta_rd_data_b)
++        .rd_data_b (beta_rd_data_b),
++
++        .wr_vec_en   (beta_wr_vec_en),
++        .wr_vec_addr (fd_beta_addr_d1),
++        .wr_vec_data (fd_dec_bits)
+     );
+ 
+     // =========================================================================
+@@ -621,7 +782,8 @@ module sc_datapath #(
+ 
+     sc_uhat_mem #(
+         .NMAX    (NMAX),
+-        .INDEX_W (INDEX_W)
++        .INDEX_W (INDEX_W),
++        .FAST_P  (FAST_P)
+     )
+     u_sc_uhat_mem (
+         .clk          (clk),
+@@ -641,7 +803,19 @@ module sc_datapath #(
+         .u_ready      (u_ready),
+         .u_bit        (u_bit),
+         .u_index      (u_index),
+-        .u_last       (u_last)
++        .u_last       (u_last),
++
++        .frozen_bits    (frozen_bits),
++
++        .wr_vec_en      (uhat_wr_vec_en),
++        .wr_vec_index   (uhat_wr_vec_index),
++        .wr_vec_bits    (uhat_wr_vec_bits),
++
++        .rd_vec_addr_a  (fd_uhat_rd_a),
++        .rd_vec_data_a  (uhat_rd_vec_data_a),
++
++        .rd_vec_addr_b  (fd_uhat_rd_b),
++        .rd_vec_data_b  (uhat_rd_vec_data_b)
+     );
+ 
+ endmodule

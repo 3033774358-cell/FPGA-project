@@ -1,0 +1,4 @@
+interface:
+  display_name: "极化码 SC 译码器 RTL 流程"
+  short_description: "极化解码器 RTL 编写/验证/优化全流程：Python 模型→RTL→bit-exact 回归→面积优化→综合"
+  default_prompt: "Use $polar-sc-decoder to implement and verify a polar code SC/Fast-SSC decoder RTL following the project methodology."

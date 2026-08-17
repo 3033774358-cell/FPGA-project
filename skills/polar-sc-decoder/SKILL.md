@@ -9,7 +9,7 @@ description: 编写、修改、验证和优化极化码（Polar code）SC / Fast
 
 按顺序执行，每步完成并验证后再进入下一步：
 
-1. **确认需求与参数**：先读 [需求与前置阶段](references/requirements.md) 的前半段约定（B/C 分工、固定配置、位序、冻结集、PE 定义、LLR 布局、Y790s 选型），再确认码长 N∈{64..1024}（`2^n_log`）、信息位 K、可靠度排序 Q（`polar_reliability_rom`）、冻结位选择、LLR 映射（0→+A，1→-A）、CRC 配置；以 T/XS 10002-2025 附录 H 为基准。历史讨论原始记录在 `references/history/`，先查 [history-index.md](references/history-index.md)。
+1. **确认需求与参数**：先读 [需求与前置阶段](references/requirements.md) 的前半段约定（B/C 分工、固定配置、位序、冻结集、PE 定义、LLR 布局、Y790s 选型），再确认码长 N∈{64..1024}（`2^n_log`）、信息位 K、可靠度排序 Q（`polar_reliability_rom`）、冻结位选择、LLR 映射（0→+A，1→-A）、CRC 配置；以 T/XS 10002-2025 附录 H 为基准。
 2. **建立 Python 参考模型**：先写 bit-exact 参考编码/译码模型，与附录 H 示例向量逐比特比对全部一致后才开始 RTL。
 3. **建立逐周期模型**：用 Python 逐拍复刻 controller + datapath + 存储器 + PE 的调度，锁定周期数与输出行为；之后每个优化阶段都要与它 bit-exact 对比。
 4. **实现 RTL 模块**：按 [架构与接口](references/architecture.md) 划分模块并保持顶层接口冻结。
@@ -30,7 +30,6 @@ description: 编写、修改、验证和优化极化码（Polar code）SC / Fast
 
 - [architecture.md](references/architecture.md) — 模块职责、参数、顶层接口、堆索引、节点类型约定
 - [requirements.md](references/requirements.md) — 前半段需求：B/C 分工、固定配置、位序、冻结集、PE、模块顺序、LLR 布局、Y790s 选型
-- [history-index.md](references/history-index.md) — 29 份前半段历史对话的索引与使用指引
 - [verification.md](references/verification.md) — 参考模型、逐周期模型、TB 清单、回归矩阵、门级仿真注意
 - [optimization.md](references/optimization.md) — 流水线、Fast-SSC、存储器优化与已知陷阱
 - [vivado-flow.md](references/vivado-flow.md) — 仿真命令、综合 Tcl、license 应对、综合后仿真、IP 封装

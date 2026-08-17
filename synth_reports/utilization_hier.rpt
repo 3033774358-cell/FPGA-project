@@ -1,0 +1,102 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.2 (win64) Build 5239630 Fri Nov 08 22:35:27 MST 2024
+| Date         : Mon Aug 17 15:12:51 2026
+| Host         : LAPTOP-P5DPGRJE running 64-bit major release  (build 9200)
+| Command      : report_utilization -hierarchical -file E:/codex/output/sc_fast_ssc_bram_synth/opt2/utilization_hier.rpt
+| Design       : sc_decoder_core
+| Device       : xc7a200tfbg676-2
+| Speed File   : -2
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------------------------+--------------------------------+------------+------------+---------+------+------+--------+--------+------------+
+|          Instance          |             Module             | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | DSP Blocks |
++----------------------------+--------------------------------+------------+------------+---------+------+------+--------+--------+------------+
+| sc_decoder_core            |                          (top) |       5587 |       5107 |     480 |    0 | 1578 |      2 |      8 |          0 |
+|   (sc_decoder_core)        |                          (top) |         27 |         27 |       0 |    0 |   24 |      0 |      0 |          0 |
+|   u_controller             |                  sc_controller |       1027 |       1027 |       0 |    0 |  304 |      0 |      0 |          0 |
+|   u_datapath               |                    sc_datapath |       1474 |       1250 |     224 |    0 |  172 |      2 |      8 |          0 |
+|     (u_datapath)           |                    sc_datapath |        154 |        154 |       0 |    0 |   90 |      0 |      0 |          0 |
+|     u_sc_beta_mem          |                    sc_beta_mem |        287 |        159 |     128 |    0 |    2 |      0 |      0 |          0 |
+|       (u_sc_beta_mem)      |                    sc_beta_mem |        111 |        111 |       0 |    0 |    2 |      0 |      0 |          0 |
+|       gen_bank[0].u_bank_a |                 sc_bit_bank__1 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[0].u_bank_b |                 sc_bit_bank__2 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[1].u_bank_a |                 sc_bit_bank__3 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[1].u_bank_b |                 sc_bit_bank__4 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[2].u_bank_a |                 sc_bit_bank__5 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[2].u_bank_b |                 sc_bit_bank__6 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[3].u_bank_a |                 sc_bit_bank__7 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[3].u_bank_b |                 sc_bit_bank__8 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[4].u_bank_a |                 sc_bit_bank__9 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[4].u_bank_b |                sc_bit_bank__10 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[5].u_bank_a |                sc_bit_bank__11 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[5].u_bank_b |                sc_bit_bank__12 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[6].u_bank_a |                sc_bit_bank__13 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[6].u_bank_b |                sc_bit_bank__14 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[7].u_bank_a |                sc_bit_bank__15 |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[7].u_bank_b |                    sc_bit_bank |         11 |          3 |       8 |    0 |    0 |      0 |      0 |          0 |
+|     u_sc_llr_mem           |                     sc_llr_mem |        272 |        272 |       0 |    0 |   35 |      2 |      8 |          0 |
+|       (u_sc_llr_mem)       |                     sc_llr_mem |        272 |        272 |       0 |    0 |   35 |      0 |      0 |          0 |
+|       gen_ram_v[0].u_ram_v |                 sc_llr_bank__1 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[1].u_ram_v |                 sc_llr_bank__2 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[2].u_ram_v |                 sc_llr_bank__3 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[3].u_ram_v |                 sc_llr_bank__4 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[4].u_ram_v |                 sc_llr_bank__5 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[5].u_ram_v |                 sc_llr_bank__6 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[6].u_ram_v |                 sc_llr_bank__7 |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       gen_ram_v[7].u_ram_v |                    sc_llr_bank |          0 |          0 |       0 |    0 |    0 |      0 |      1 |          0 |
+|       u_ram_a              |                  sc_llr_ram__1 |          0 |          0 |       0 |    0 |    0 |      1 |      0 |          0 |
+|       u_ram_b              |                     sc_llr_ram |          0 |          0 |       0 |    0 |    0 |      1 |      0 |          0 |
+|     u_sc_pe                |                          sc_pe |         74 |         74 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_sc_uhat_mem          |                    sc_uhat_mem |        687 |        591 |      96 |    0 |   45 |      0 |      0 |          0 |
+|       (u_sc_uhat_mem)      |                    sc_uhat_mem |        591 |        591 |       0 |    0 |   45 |      0 |      0 |          0 |
+|       gen_bank[0].u_bank_a |              sc_bit_bank_2r__1 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[0].u_bank_b | sc_bit_bank__parameterized0__1 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[1].u_bank_a |              sc_bit_bank_2r__2 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[1].u_bank_b | sc_bit_bank__parameterized0__2 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[2].u_bank_a |              sc_bit_bank_2r__3 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[2].u_bank_b | sc_bit_bank__parameterized0__3 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[3].u_bank_a |              sc_bit_bank_2r__4 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[3].u_bank_b | sc_bit_bank__parameterized0__4 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[4].u_bank_a |              sc_bit_bank_2r__5 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[4].u_bank_b | sc_bit_bank__parameterized0__5 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[5].u_bank_a |              sc_bit_bank_2r__6 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[5].u_bank_b | sc_bit_bank__parameterized0__6 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[6].u_bank_a |              sc_bit_bank_2r__7 |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[6].u_bank_b | sc_bit_bank__parameterized0__7 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[7].u_bank_a |                 sc_bit_bank_2r |          8 |          0 |       8 |    0 |    0 |      0 |      0 |          0 |
+|       gen_bank[7].u_bank_b |    sc_bit_bank__parameterized0 |          4 |          0 |       4 |    0 |    0 |      0 |      0 |          0 |
+|   u_fast_node_rom          |               sc_fast_node_rom |        694 |        438 |     256 |    0 |   21 |      0 |      0 |          0 |
+|     (u_fast_node_rom)      |               sc_fast_node_rom |        390 |        390 |       0 |    0 |   21 |      0 |      0 |          0 |
+|     gen_bank[0].u_bank_a   |                sc_type_bank__1 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[0].u_bank_b   |             sc_type_bank_2r__1 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[1].u_bank_a   |                sc_type_bank__2 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[1].u_bank_b   |             sc_type_bank_2r__2 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[2].u_bank_a   |                sc_type_bank__3 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[2].u_bank_b   |             sc_type_bank_2r__3 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[3].u_bank_a   |                sc_type_bank__4 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[3].u_bank_b   |             sc_type_bank_2r__4 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[4].u_bank_a   |                sc_type_bank__5 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[4].u_bank_b   |             sc_type_bank_2r__5 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[5].u_bank_a   |                sc_type_bank__6 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[5].u_bank_b   |             sc_type_bank_2r__6 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[6].u_bank_a   |                sc_type_bank__7 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[6].u_bank_b   |             sc_type_bank_2r__7 |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[7].u_bank_a   |                   sc_type_bank |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|     gen_bank[7].u_bank_b   |                sc_type_bank_2r |         19 |          3 |      16 |    0 |    0 |      0 |      0 |          0 |
+|   u_frozen_gen             |                     frozen_gen |       2365 |       2365 |       0 |    0 | 1057 |      0 |      0 |          0 |
+|     (u_frozen_gen)         |                     frozen_gen |       2185 |       2185 |       0 |    0 | 1057 |      0 |      0 |          0 |
+|     u_rom                  |          polar_reliability_rom |        180 |        180 |       0 |    0 |    0 |      0 |      0 |          0 |
++----------------------------+--------------------------------+------------+------------+---------+------+------+--------+--------+------------+
+
+
